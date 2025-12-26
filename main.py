@@ -96,12 +96,47 @@ class ManualControl:
 
         self.env.render()
 
-    
+
+class AutoControl(ManualControl):
+    def __init__(self, agent, sleep: float = 0.2, **kwargs):
+        self.agent = agent
+        self.sleep = sleep
+        super().__init__(env=agent.env, **kwargs)
+
+    def run(self):
+        import pyglet
+
+        o, info = self.env.reset()
+        self.agent.update(info["state_value"])
+        self.env.render()
+
+        def update(dt):
+            action_str = self.agent.act()
+            o, r, termination, truncation, info = self.env.step(action_str)
+            self.agent.update(info["state_value"])
+            self.env.render()
+
+        # Schedule agent actions
+        pyglet.clock.schedule_interval(update, self.sleep)
+
+        # Start pyglet event loop (must be last)
+        pyglet.app.run()
+
+        self.env.close()
+
 
 if __name__ == "__main__":
-    import argparse
     from env import ManyObjectsEnv
-    env = ManyObjectsEnv(n = 20, grid_size=16, render_mode="agent")
+    from agent import BOAgent, RFModel
 
-    manual_control = ManualControl(env=env, no_time_limit=False, domain_rand=False)
-    manual_control.run()
+    env = ManyObjectsEnv(n=20, grid_size=16, render_mode="agent")
+
+    agent = BOAgent(
+        surrogate_model=RFModel(),
+        input_space=[pose.discretize() for pose in env.enumerate_poses()],
+        env=env,
+    )
+
+    c = AutoControl(agent=agent, no_time_limit=True, domain_rand=False, sleep=0.5)
+
+    c.run()
