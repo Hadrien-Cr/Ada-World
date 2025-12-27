@@ -1,3 +1,5 @@
 scikit-learn
 miniworld
+matplotlib
+tqdm
 numpy

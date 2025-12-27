@@ -25,49 +25,39 @@ V_ANGLES_INV = {angle: idx for idx, angle in enumerate(V_ANGLES)}
 H_ANGLES_INV = {angle: idx for idx, angle in enumerate(H_ANGLES)}
 
 DELTA = {
-    0: (GRID_STEP, 0),
-    90: (0, GRID_STEP),
-    180: (-GRID_STEP, 0),
-    270: (0, -GRID_STEP),
+    0: (1, 0),
+    90: (0, 1),
+    180: (-1, 0),
+    270: (0, -1),
 }
-
-Discretized_AgentPose = tuple[int, int, int, int]
 
 
 @dataclass
-class AgentPose:
-    x: float
-    y: float
-    z: float
-    yaw: float
-    camera_horizon: float
+class DiscretizedAgentPose:
+    idx_x: int
+    idx_z: int
+    idx_yaw: int
+    idx_h: int
 
-    def __init__(self, x, y, z, yaw, camera_horizon):
-        self.x = x
-        self.y = y
-        self.z = z
-        self.yaw = yaw
-        self.camera_horizon = camera_horizon
-
-    def discretize(self) -> Discretized_AgentPose:
-        idx_x = int(self.x // GRID_STEP)
-        idx_z = int(self.z // GRID_STEP)
-        idx_yaw = V_ANGLES_INV[int(self.yaw % 360)]
-        idx_h = H_ANGLES_INV[int(self.camera_horizon)]
-        return (idx_x, idx_z, idx_yaw, idx_h)
+    def __init__(self, idx_x, idx_z, idx_yaw, idx_h) -> None:
+        self.idx_x = idx_x
+        self.idx_z = idx_z
+        self.idx_yaw = idx_yaw
+        self.idx_h = idx_h
 
     def __hash__(self):
-        return hash((self.x, self.y, self.z, self.yaw, self.camera_horizon))
+        return hash((self.idx_x, self.idx_z, self.idx_yaw, self.idx_h))
 
     def get_neighbors(
-        self, max_x: float, max_z: float
-    ) -> list[tuple[str, "AgentPose"]]:
+        self, max_idx_x: int, max_idx_z: int
+    ) -> list[tuple[str, "DiscretizedAgentPose"]]:
         neighbors = []
 
         # if agent is pointing diagonally, adjust movement accordingly
-        move_angle = int(self.yaw % 360)
-        if move_angle % 90 == 45:
-            move_angle = int(self.yaw % 360) - 45
+        if self.idx_yaw % 2 == 0:
+            move_angle = V_ANGLES[self.idx_yaw] % 360
+        else:
+            move_angle = (V_ANGLES[self.idx_yaw] - 45) % 360
 
         # movements
         for (dx, dz), action_str in [
@@ -76,16 +66,15 @@ class AgentPose:
             (DELTA[(move_angle - 90) % 360], "MoveLeft"),
             (DELTA[(move_angle + 90) % 360], "MoveRight"),
         ]:
-            if 0 <= self.x + dx < max_x and 0 <= self.z + dz < max_z:
+            if 0 <= self.idx_x + dx < max_idx_x and 0 <= self.idx_z + dz < max_idx_z:
                 neighbors.append(
                     (
                         action_str,
-                        AgentPose(
-                            self.x + dx,
-                            self.y,
-                            self.z + dz,
-                            self.yaw,
-                            self.camera_horizon,
+                        DiscretizedAgentPose(
+                            self.idx_x + dx,
+                            self.idx_z + dz,
+                            self.idx_yaw,
+                            self.idx_h,
                         ),
                     )
                 )
@@ -94,137 +83,53 @@ class AgentPose:
         neighbors.append(
             (
                 "RotateLeft",
-                AgentPose(
-                    self.x,
-                    self.y,
-                    self.z,
-                    (self.yaw + V_ANGLE_STEP) % 360,
-                    self.camera_horizon,
+                DiscretizedAgentPose(
+                    self.idx_x,
+                    self.idx_z,
+                    (self.idx_yaw + 1) % len(V_ANGLES),
+                    self.idx_h,
                 ),
             )
         )
         neighbors.append(
             (
                 "RotateRight",
-                AgentPose(
-                    self.x,
-                    self.y,
-                    self.z,
-                    (self.yaw - V_ANGLE_STEP) % 360,
-                    self.camera_horizon,
+                DiscretizedAgentPose(
+                    self.idx_x,
+                    self.idx_z,
+                    (self.idx_yaw - 1) % len(V_ANGLES),
+                    self.idx_h,
                 ),
             )
         )
 
         # look up / down
-        if self.camera_horizon > H_ANGLES[0]:
+        if self.idx_h > 0:
             neighbors.append(
                 (
                     "LookDown",
-                    AgentPose(
-                        self.x,
-                        self.y,
-                        self.z,
-                        self.yaw,
-                        self.camera_horizon - H_ANGLE_STEP,
+                    DiscretizedAgentPose(
+                        self.idx_x,
+                        self.idx_z,
+                        self.idx_yaw,
+                        self.idx_h - 1,
                     ),
                 )
             )
-        if self.camera_horizon < H_ANGLES[-1]:
+        if self.idx_h < len(H_ANGLES) - 1:
             neighbors.append(
                 (
                     "LookUp",
-                    AgentPose(
-                        self.x,
-                        self.y,
-                        self.z,
-                        self.yaw,
-                        self.camera_horizon + H_ANGLE_STEP,
+                    DiscretizedAgentPose(
+                        self.idx_x,
+                        self.idx_z,
+                        self.idx_yaw,
+                        self.idx_h + 1,
                     ),
                 )
             )
 
         return neighbors
-
-
-def agent_pose_from_discretized(
-    idx_x: int, idx_z: int, idx_yaw: int, idx_h: int
-) -> AgentPose:
-    return AgentPose(
-        x=GRID_STEP * idx_x,
-        y=0,
-        z=GRID_STEP * idx_z,
-        yaw=V_ANGLES[idx_yaw],
-        camera_horizon=H_ANGLES[idx_h],
-    )
-
-
-def dijkstra(
-    start: int,
-    goal: int,
-    w: dict[int, list[tuple[int, float, int]]],
-) -> list[tuple[int, int]]:
-    """
-    w is the weighted_adjacency_list: dict[node, list[(action, cost, neighbor)]]
-    Return the list of (action, node) representing the path.
-    """
-    import heapq
-
-    pq = [(0.0, start)]
-
-    distances = {start: 0.0}
-
-    parent_map = {start: (None, None)}
-
-    while pq:
-        current_cost, u = heapq.heappop(pq)
-
-        # If we reached the goal, reconstruct the path
-        if u == goal:
-            path = []
-            curr = goal
-            while curr is not None:
-                parent, action = parent_map[curr]
-                if action is not None:
-                    path.append((action, curr))
-                curr = parent
-            return path[::-1]  # Reverse to get path from start to goal
-
-        # If we found a better way to u already, skip this entry
-        if current_cost > distances.get(u, float("inf")):
-            continue
-
-        # Explore neighbors
-        for action, edge_cost, v in w.get(u, []):
-            new_cost = current_cost + edge_cost
-
-            if v not in distances or new_cost < distances[v]:
-                distances[v] = new_cost
-                parent_map[v] = (u, action)  # type: ignore
-                heapq.heappush(pq, (new_cost, v))
-
-    return []  # Return empty list if no path exists
-
-
-def get_weighted_adjacency_list(
-    values: dict[Discretized_AgentPose, float],
-    adjacency_list: dict[
-        Discretized_AgentPose, list[tuple[int, Discretized_AgentPose]]
-    ],
-    visited_positions: set[Discretized_AgentPose],
-) -> dict[Discretized_AgentPose, list[tuple[int, float, Discretized_AgentPose]]]:
-    weighted_adjacency_list = {}
-
-    for node, neighbors in adjacency_list.items():
-        weighted_adjacency_list[node] = []
-
-        for action, n_node_tuple in neighbors:
-            value_n = values[n_node_tuple]
-            assert 0.0 <= value_n <= 1.0
-            cost = 1 - value_n if node in visited_positions else 2.0 + value_n
-            weighted_adjacency_list[node].append((action, cost, n_node_tuple))
-
-    return weighted_adjacency_list
 
 
 class ManyObjectsEnv(MiniWorldEnv):
@@ -251,43 +156,45 @@ class ManyObjectsEnv(MiniWorldEnv):
                 MeshEnt(mesh_name="medkit", height=0.50, static=True)
             )
 
-        # Place the agent
         self.place_agent(
             pos=(0, 0, 0),
             dir=0,
         )
-        self.teleport_agent(random.choice(self.enumerate_poses()))
-        self.step_count = 0
 
         # initialize graph
         self.adjacency_list: dict[
-            Discretized_AgentPose, list[tuple[int, Discretized_AgentPose]]
+            DiscretizedAgentPose, list[tuple[int, DiscretizedAgentPose]]
         ] = {}
 
         for pose in self.enumerate_poses():
-            pose_tuple = pose.discretize()
-            self.adjacency_list[pose_tuple] = []
-            pose = agent_pose_from_discretized(*pose_tuple)
+            self.adjacency_list[pose] = []
             neighbors = pose.get_neighbors(self.grid_size, self.grid_size)
 
             for action_str, n_pose in neighbors:
-                n_pose_tuple = n_pose.discretize()
-                self.adjacency_list[pose_tuple].append(
-                    (Actions[action_str], n_pose_tuple)
-                )
+                self.adjacency_list[pose].append((Actions[action_str], n_pose))
 
-    def get_pose(self) -> AgentPose:
-        x, y, z = self.agent.pos
-        yaw = (self.agent.dir * 180 / math.pi) % 360
+    def initialize_gt_values(self) -> None:
+        self.ground_truth_values: dict[DiscretizedAgentPose, float] = {}
+
+        for pose in self.enumerate_poses():
+            self.teleport_agent(pose)
+            state_value = self.get_state_value()
+            self.ground_truth_values[pose] = state_value
+
+    def get_pose(self) -> DiscretizedAgentPose:
+        x, y, z = self.agent.pos  # type: ignore
+        yaw = (self.agent.dir * 180 / math.pi) % 360  # type: ignore
         camera_horizon = self.agent.cam_pitch
-        return AgentPose(x, y, z, yaw, camera_horizon)
+        idx_x = round(x / GRID_STEP)
+        idx_z = round(z / GRID_STEP)
+        idx_yaw = V_ANGLES_INV[round(yaw)]
+        idx_h = H_ANGLES_INV[round(camera_horizon)]
+
+        return DiscretizedAgentPose(idx_x, idx_z, idx_yaw, idx_h)
 
     def move_agent(self, dx, dy) -> bool:
-        self.agent.pos = (
-            self.agent.pos[0] + dx,
-            self.agent.pos[1],
-            self.agent.pos[2] + dy,
-        )
+        x, y, z = self.agent.pos  # type: ignore
+        self.agent.pos = (x + dx, y, z + dy)  # type: ignore
         return True
 
     def turn_agent(self, turn_angle) -> bool:
@@ -306,50 +213,43 @@ class ManyObjectsEnv(MiniWorldEnv):
         self.agent.cam_pitch += pitch_angle
         return True
 
-    def enumerate_poses(self) -> list[AgentPose]:
-        poses = []
+    def enumerate_poses(self) -> list[DiscretizedAgentPose]:
+        return [
+            DiscretizedAgentPose(idx_x, idx_z, idx_yaw, idx_h)
+            for idx_x in range(self.grid_size)
+            for idx_z in range(self.grid_size)
+            for idx_yaw in range(len(V_ANGLES))
+            for idx_h in range(len(H_ANGLES))
+        ]
 
-        for idx_x in range(int(self.grid_size / GRID_STEP)):
-            for idx_z in range(int(self.grid_size / GRID_STEP)):
-                for idx_yaw in range(len(V_ANGLES)):
-                    for idx_h in range(len(H_ANGLES)):
-                        pose = AgentPose(
-                            x=GRID_STEP * idx_x,
-                            y=0,
-                            z=GRID_STEP * idx_z,
-                            yaw=V_ANGLES[idx_yaw],
-                            camera_horizon=H_ANGLES[idx_h],
-                        )
-                        poses.append(pose)
-        return poses
-
-    def teleport_agent(self, pose: AgentPose):
-        self.agent.pos = (pose.x, pose.y, pose.z)
-        self.agent.dir = pose.yaw * math.pi / 180
-        self.agent.cam_pitch = pose.camera_horizon
+    def teleport_agent(self, pose: DiscretizedAgentPose):
+        self.agent.pos = (pose.idx_x * GRID_STEP, 0, pose.idx_z * GRID_STEP)  # type: ignore
+        self.agent.dir = V_ANGLES[pose.idx_yaw] * math.pi / 180  # type: ignore
+        self.agent.cam_pitch = H_ANGLES[pose.idx_h] * math.pi / 180  # type: ignore
 
     def step(self, action_str: str) -> tuple:
         self.step_count += 1
+        pose = self.get_pose()
 
-        yaw = self.get_pose().yaw
-        move_angle = int(yaw % 360)
-        if move_angle % 90 == 45:
-            move_angle = int(yaw % 360) - 45
+        if pose.idx_yaw % 2 == 0:
+            move_angle = V_ANGLES[pose.idx_yaw] % 360
+        else:
+            move_angle = (V_ANGLES[pose.idx_yaw] - 45) % 360
 
         if action_str == "MoveAhead":
             dx, dy = DELTA[move_angle]
             self.move_agent(dx, dy)
 
         elif action_str == "MoveBack":
-            dx, dy = DELTA[int((move_angle + 180) % 360)]
+            dx, dy = DELTA[round((move_angle + 180) % 360)]
             self.move_agent(dx, dy)
 
         elif action_str == "MoveLeft":
-            dx, dy = DELTA[int((move_angle - 90) % 360)]
+            dx, dy = DELTA[round((move_angle - 90) % 360)]
             self.move_agent(dx, dy)
 
         elif action_str == "MoveRight":
-            dx, dy = DELTA[int((move_angle + 90) % 360)]
+            dx, dy = DELTA[round((move_angle + 90) % 360)]
             self.move_agent(dx, dy)
 
         elif action_str == "RotateLeft":
@@ -373,13 +273,35 @@ class ManyObjectsEnv(MiniWorldEnv):
         truncation = False
         info = {}
 
-        info["state_value"] = len(self.get_visible_ents())
+        info["state_value"] = self.get_state_value()
 
         return obs, reward, termination, truncation, info
 
+    def get_state_value(self) -> float:
+        # s = 0.0
+
+        # for ent in self.entities:
+        #     if isinstance(ent, MeshEnt):
+        #         ent_x, ent_y, ent_z = ent.pos  # type: ignore
+        #         agent_x, agent_y, agent_z = self.agent.pos  # type: ignore
+        #         distance = math.sqrt(
+        #             (ent_x - agent_x) ** 2
+        #             + (ent_y - agent_y) ** 2
+        #             + (ent_z - agent_z) ** 2
+        #         )
+        #         if distance < 3:
+        #             s += 1
+        # return s
+        return len(self.get_visible_ents())
+
     def reset(self) -> tuple:
         super().reset()
+        self.initialize_gt_values()
+
+        # randomly teleport agent
+        self.teleport_agent(random.choice(self.enumerate_poses()))
+        self.step_count = 0
 
         info = {}
-        info["state_value"] = len(self.get_visible_ents())
+        info["state_value"] = self.get_state_value()
         return (None, info)

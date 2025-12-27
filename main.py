@@ -97,10 +97,15 @@ class ManualControl:
         self.env.render()
 
 
+from tqdm import tqdm
+
+
 class AutoControl(ManualControl):
-    def __init__(self, agent, sleep: float = 0.2, **kwargs):
+    def __init__(self, agent, sleep: float = 0.2, num_samples: int = 10, **kwargs):
         self.agent = agent
         self.sleep = sleep
+        self.num_samples = num_samples
+        self.pbar = tqdm(total=num_samples)  # dummy progress bar to keep pyglet happy
         super().__init__(env=agent.env, **kwargs)
 
     def run(self):
@@ -116,6 +121,14 @@ class AutoControl(ManualControl):
             self.agent.update(info["state_value"])
             self.env.render()
 
+            if termination or truncation:
+                pyglet.app.exit()
+
+            self.pbar.update(1)
+
+            if self.pbar.n >= self.num_samples:
+                pyglet.app.exit()
+
         # Schedule agent actions
         pyglet.clock.schedule_interval(update, self.sleep)
 
@@ -128,15 +141,33 @@ class AutoControl(ManualControl):
 if __name__ == "__main__":
     from env import ManyObjectsEnv
     from agent import BOAgent, RFModel
+    import random
 
-    env = ManyObjectsEnv(n=20, grid_size=16, render_mode="agent")
+    random.seed(0)
+
+    steps = 1000
+    pbar = tqdm(total=steps)
+    env = ManyObjectsEnv(n=20, grid_size=16, render_mode="human")
+    o, info = env.reset()
+
+    # c = AutoControl(
+    #     agent=agent, no_time_limit=True, domain_rand=False, sleep=1e-9, num_samples=500
+    # )
+
+    # c.run()
 
     agent = BOAgent(
         surrogate_model=RFModel(),
-        input_space=[pose.discretize() for pose in env.enumerate_poses()],
+        input_space=env.enumerate_poses(),
         env=env,
+        num_samples=300,
+        init_info=info,
     )
 
-    c = AutoControl(agent=agent, no_time_limit=True, domain_rand=False, sleep=0.5)
-
-    c.run()
+    while steps > 0:
+        action_str = agent.act()
+        o, r, termination, truncation, info = env.step(action_str)
+        agent.update(env.get_pose(), info["state_value"])
+        pbar.update(1)
+        env.render()
+        steps -= 1
